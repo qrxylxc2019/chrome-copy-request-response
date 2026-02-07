@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>生成图标</title>
+</head>
+<body>
+  <h3>右键保存这些图标到 icons 文件夹</h3>
+  <p>16x16:</p>
+  <canvas id="c16" width="16" height="16"></canvas>
+  <p>48x48:</p>
+  <canvas id="c48" width="48" height="48"></canvas>
+  <p>128x128:</p>
+  <canvas id="c128" width="128" height="128"></canvas>
+  
+  <script>
+    function drawIcon(canvas) {
+      const ctx = canvas.getContext('2d');
+      const size = canvas.width;
+      const scale = size / 128;
+      
+      // 背景
+      ctx.fillStyle = '#0e639c';
+      ctx.beginPath();
+      ctx.roundRect(0, 0, size, size, 16 * scale);
+      ctx.fill();
+      
+      // 复制图标
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 8 * scale;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      // 后面的文档
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.beginPath();
+      ctx.roundRect(45 * scale, 20 * scale, 60 * scale, 75 * scale, 6 * scale);
+      ctx.fill();
+      ctx.stroke();
+      
+      // 前面的文档
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.roundRect(25 * scale, 35 * scale, 60 * scale, 75 * scale, 6 * scale);
+      ctx.fill();
+      ctx.strokeStyle = '#0e639c';
+      ctx.stroke();
+      
+      // 线条
+      ctx.strokeStyle = '#0e639c';
+      ctx.lineWidth = 4 * scale;
+      ctx.beginPath();
+      ctx.moveTo(35 * scale, 55 * scale);
+      ctx.lineTo(70 * scale, 55 * scale);
+      ctx.moveTo(35 * scale, 70 * scale);
+      ctx.lineTo(70 * scale, 70 * scale);
+      ctx.moveTo(35 * scale, 85 * scale);
+      ctx.lineTo(55 * scale, 85 * scale);
+      ctx.stroke();
+    }
+    
+    drawIcon(document.getElementById('c16'));
+    drawIcon(document.getElementById('c48'));
+    drawIcon(document.getElementById('c128'));
+    
+    // 自动下载
+    ['c16', 'c48', 'c128'].forEach(id => {
+      const canvas = document.getElementById(id);
+      const link = document.createElement('a');
+      link.download = `icon${canvas.width}.png`;
+      link.href = canvas.toDataURL('image/png');
+      document.body.appendChild(document.createElement('br'));
+      document.body.appendChild(link);
+      link.textContent = `下载 icon${canvas.width}.png`;
+    });
+  </script>
+</body>
+</html>

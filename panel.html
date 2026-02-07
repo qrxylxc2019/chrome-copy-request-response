@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Menlo, monospace;
+      font-size: 12px;
+      background: linear-gradient(180deg, #ffffff 0%, #f0f0f0 50%, #e8e8e8 100%);
+      color: #333;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: linear-gradient(180deg, #fafafa 0%, #f0f0f0 100%);
+      border-bottom: 1px solid #ddd;
+    }
+    .filter-input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+      color: #333;
+      font-size: 12px;
+    }
+    .filter-input:focus {
+      outline: none;
+      border-color: #666;
+    }
+    .toolbar-btn {
+      padding: 6px 14px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      background: linear-gradient(180deg, #fff 0%, #f5f5f5 100%);
+      color: #333;
+      white-space: nowrap;
+    }
+    .toolbar-btn:hover {
+      background: linear-gradient(180deg, #f5f5f5 0%, #eee 100%);
+      border-color: #999;
+    }
+    .toolbar-btn.danger {
+      color: #d32f2f;
+      border-color: #e57373;
+    }
+    .toolbar-btn.danger:hover {
+      background: linear-gradient(180deg, #ffebee 0%, #ffcdd2 100%);
+    }
+    .toolbar-btn.active {
+      background: linear-gradient(180deg, #1976d2 0%, #1565c0 100%);
+      color: #fff;
+      border-color: #1565c0;
+    }
+    .toolbar-btn.active:hover {
+      background: linear-gradient(180deg, #1565c0 0%, #0d47a1 100%);
+    }
+    
+    .type-filter {
+      display: flex;
+      gap: 2px;
+      padding: 6px 12px;
+      background: linear-gradient(180deg, #f5f5f5 0%, #ebebeb 100%);
+      border-bottom: 1px solid #ddd;
+    }
+    .type-btn {
+      padding: 4px 10px;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 11px;
+      background: transparent;
+      color: #666;
+      white-space: nowrap;
+    }
+    .type-btn:hover {
+      background: rgba(0, 0, 0, 0.05);
+      color: #333;
+    }
+    .type-btn.active {
+      background: #fff;
+      border-color: #ccc;
+      color: #1976d2;
+      font-weight: 500;
+    }
+
+    /* 上下 flex 容器：network + application */
+    .content-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Network 区域 */
+    .network-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 80px;
+    }
+    
+    .main-container {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    
+    /* 上下分隔条 */
+    .v-resizer {
+      height: 2px;
+      background: #ddd;
+      cursor: ns-resize;
+      flex-shrink: 0;
+      transition: background 0.2s;
+      position: relative;
+    }
+    .v-resizer::before {
+      content: '';
+      position: absolute;
+      left: 0; right: 0;
+      top: -3px; bottom: -3px;
+      cursor: ns-resize;
+    }
+    .v-resizer:hover,
+    .v-resizer.dragging {
+      background: #1976d2;
+    }
+    body.v-resizing {
+      cursor: ns-resize !important;
+      user-select: none !important;
+    }
+    body.v-resizing * {
+      cursor: ns-resize !important;
+    }
+    
+    /* 左侧请求列表 */
+    .request-list {
+      width: 45%;
+      min-width: 200px;
+      overflow-y: auto;
+      background: linear-gradient(180deg, #fff 0%, #fafafa 100%);
+    }
+    
+    /* 可拖动分隔条 */
+    .resizer {
+      width: 2px;
+      background: #ddd;
+      cursor: ew-resize;
+      flex-shrink: 0;
+      transition: background 0.2s;
+      position: relative;
+    }
+    .resizer::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -3px;
+      right: -3px;
+      bottom: 0;
+      cursor: ew-resize;
+    }
+    .resizer:hover,
+    .resizer.dragging {
+      background: #1976d2;
+    }
+    body.resizing {
+      cursor: ew-resize !important;
+      user-select: none !important;
+    }
+    body.resizing * {
+      cursor: ew-resize !important;
+    }
+    .request-item {
+      padding: 2px 5px;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+      background: linear-gradient(180deg, #fff 0%, #fafafa 100%);
+    }
+    .request-item:hover {
+      background: linear-gradient(180deg, #f5f5f5 0%, #efefef 100%);
+    }
+    .request-item.selected {
+      background: linear-gradient(180deg, #e3f2fd 0%, #bbdefb 100%);
+    }
+    .request-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .method {
+      font-weight: bold;
+      font-size: 11px;
+      min-width: 45px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      text-align: center;
+    }
+    .method.GET { color: #2e7d32; background: #e8f5e9; }
+    .method.POST { color: #f57c00; background: #fff3e0; }
+    .method.PUT { color: #1565c0; background: #e3f2fd; }
+    .method.DELETE { color: #c62828; background: #ffebee; }
+    .method.PATCH { color: #7b1fa2; background: #f3e5f5; }
+    .url {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #1976d2;
+    }
+    .url.error {
+      color: #c62828;
+    }
+    .status {
+      font-size: 11px;
+      min-width: 35px;
+      text-align: right;
+      font-weight: 500;
+    }
+    .status.success { color: #2e7d32; }
+    .status.error { color: #c62828; }
+    .size {
+      font-size: 11px;
+      min-width: 55px;
+      text-align: right;
+      color: #666;
+    }
+    .time {
+      font-size: 11px;
+      min-width: 55px;
+      text-align: right;
+      color: #666;
+    }
+    
+    /* 请求行内按钮 */
+    .request-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed #ddd;
+    }
+    .action-btn {
+      padding: 4px 10px;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 10px;
+      background: linear-gradient(180deg, #fff 0%, #f8f8f8 100%);
+      color: #555;
+    }
+    .action-btn:hover {
+      background: linear-gradient(180deg, #f0f0f0 0%, #e8e8e8 100%);
+      border-color: #999;
+    }
+    .action-btn.primary {
+      background: linear-gradient(180deg, #1976d2 0%, #1565c0 100%);
+      color: #fff;
+      border-color: #1565c0;
+    }
+    .action-btn.primary:hover {
+      background: linear-gradient(180deg, #1565c0 0%, #0d47a1 100%);
+    }
+    .action-btn.replay {
+      background: linear-gradient(180deg, #ff9800 0%, #f57c00 100%);
+      color: #fff;
+      border-color: #f57c00;
+    }
+    .action-btn.replay:hover {
+      background: linear-gradient(180deg, #f57c00 0%, #e65100 100%);
+    }
+    
+    /* 右侧详情面板 */
+    .detail-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: linear-gradient(180deg, #fff 0%, #f8f8f8 100%);
+    }
+    .detail-tabs {
+      display: flex;
+      background: linear-gradient(180deg, #fafafa 0%, #f0f0f0 100%);
+      border-bottom: 1px solid #ddd;
+    }
+    .detail-tab {
+      padding: 10px 18px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      color: #666;
+      font-weight: 500;
+    }
+    .detail-tab:hover { color: #333; }
+    .detail-tab.active {
+      color: #1976d2;
+      border-bottom-color: #1976d2;
+    }
+    .detail-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+    .detail-section {
+      margin-bottom: 16px;
+    }
+    .section-title {
+      font-weight: bold;
+      color: #1976d2;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .header-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid #e0e0e0;
+    }
+    .header-table td {
+      padding: 6px 10px;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: top;
+    }
+    .header-table tr:last-child td {
+      border-bottom: none;
+    }
+    .header-table td:first-child {
+      color: #7b1fa2;
+      width: 200px;
+      word-break: break-all;
+      background: #fafafa;
+    }
+    .header-table td:last-child {
+      color: #333;
+      word-break: break-all;
+    }
+    .code-block {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 12px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      font-family: Consolas, Monaco, 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .json-key { color: #7b1fa2; }
+    .json-string { color: #c62828; }
+    .json-number { color: #1565c0; }
+    .json-boolean { color: #2e7d32; }
+    .json-null { color: #666; }
+    
+    .empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #999;
+    }
+    .general-info {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 10px;
+    }
+    .general-info div {
+      padding: 4px 0;
+    }
+    .general-info .label {
+      color: #666;
+      display: inline-block;
+      width: 130px;
+    }
+    .general-info .value {
+      color: #333;
+    }
+    
+    /* Application 内联面板 */
+    .app-section {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      flex-shrink: 0;
+      min-height: 0;
+      border-top: 2px solid #1976d2;
+    }
+    .app-section.collapsed {
+      display: none;
+    }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="toolbar-btn danger" id="clearList">🗑️</button>
+    <button class="toolbar-btn active" id="appBtn" style="font-weight:500;">📦 Application</button>
+    <input type="text" class="filter-input" id="filter" placeholder="过滤请求 URL...">
+  </div>
+  
+  <div class="type-filter">
+    <button class="type-btn" data-type="all">All</button>
+    <button class="type-btn active" data-type="fetch">Fetch/XHR</button>
+    <button class="type-btn" data-type="doc">Doc</button>
+    <button class="type-btn" data-type="css">CSS</button>
+    <button class="type-btn" data-type="js">JS</button>
+    <button class="type-btn" data-type="font">Font</button>
+    <button class="type-btn" data-type="img">Img</button>
+    <button class="type-btn" data-type="media">Media</button>
+    <button class="type-btn" data-type="manifest">Manifest</button>
+    <button class="type-btn" data-type="ws">Socket</button>
+    <button class="type-btn" data-type="wasm">Wasm</button>
+    <button class="type-btn" data-type="other">Other</button>
+  </div>
+  
+  <div class="content-wrapper">
+    <!-- Network 区域 -->
+    <div class="network-section" id="networkSection">
+      <div class="main-container">
+        <div class="request-list" id="requestList">
+          <div class="empty-state">等待网络请求...</div>
+        </div>
+        
+        <div class="resizer" id="resizer"></div>
+        
+        <div class="detail-panel" id="detailPanel">
+          <div class="detail-tabs">
+            <div class="detail-tab active" data-tab="headers">Headers</div>
+            <div class="detail-tab" data-tab="payload">Payload</div>
+            <div class="detail-tab" data-tab="response">Response</div>
+            <div class="detail-tab" data-tab="preview">Preview</div>
+          </div>
+          <div class="detail-content" id="detailContent">
+            <div class="empty-state">选择一个请求查看详情</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 上下拖动分隔条 -->
+    <div class="v-resizer" id="vResizer"></div>
+
+    <!-- Application Storage 面板（内联，与 network 上下排列） -->
+    <div class="app-section" id="appSection" style="height:45%;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:2px 12px;background:linear-gradient(180deg,#fafafa 0%,#f0f0f0 100%);border-bottom:1px solid #ddd;">
+        <span style="font-weight:600;font-size:13px;color:#333;">缓存</span>
+        <button id="appClose" style="background:none;border:none;font-size:18px;cursor:pointer;color:#666;padding:2px 6px;border-radius:3px;">✕</button>
+      </div>
+      <div style="flex:1;display:flex;overflow:hidden;">
+        <div class="app-sidebar" style="width:200px;border-right:1px solid #ddd;background:#fafafa;overflow-y:auto;flex-shrink:0;">
+          <div style="padding:8px 0;">
+            <div style="padding:4px 12px;font-size:11px;color:#888;text-transform:uppercase;font-weight:600;">Storage</div>
+            <div class="app-sidebar-item active" data-storage="local" style="padding:6px 12px 6px 24px;cursor:pointer;font-size:12px;color:#333;display:flex;align-items:center;gap:6px;">
+              <span style="font-size:14px;">📁</span> Local Storage
+            </div>
+            <div class="app-sidebar-item" data-storage="session" style="padding:6px 12px 6px 24px;cursor:pointer;font-size:12px;color:#333;display:flex;align-items:center;gap:6px;">
+              <span style="font-size:14px;">📁</span> Session Storage
+            </div>
+          </div>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:linear-gradient(180deg,#fafafa 0%,#f0f0f0 100%);border-bottom:1px solid #ddd;">
+            <input type="text" class="filter-input" id="storageFilter" placeholder="过滤键值..." style="flex:1;padding:4px 8px;font-size:11px;">
+            <button class="app-toolbar-btn" id="storageRefresh" title="刷新" style="padding:4px 10px;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:11px;background:linear-gradient(180deg,#fff 0%,#f5f5f5 100%);color:#333;">🔄 刷新</button>
+            <button class="app-toolbar-btn" id="storageAdd" title="添加" style="padding:4px 10px;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:11px;background:linear-gradient(180deg,#fff 0%,#f5f5f5 100%);color:#333;">➕ 添加</button>
+            <button class="app-toolbar-btn danger" id="storageClearAll" title="清空全部" style="padding:4px 10px;border:1px solid #e57373;border-radius:3px;cursor:pointer;font-size:11px;background:linear-gradient(180deg,#fff 0%,#f5f5f5 100%);color:#d32f2f;">🗑️ 清空</button>
+          </div>
+          <div class="storage-table-wrap" id="storageTableWrap" style="flex:1;overflow:auto;">
+            <div class="storage-empty" style="display:flex;align-items:center;justify-content:center;height:100%;color:#999;font-size:12px;">加载中...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .app-sidebar-item:hover { background: #eee; }
+    .app-sidebar-item.active { background: #e3f2fd; color: #1976d2; font-weight: 500; }
+    .app-toolbar-btn:hover { background: linear-gradient(180deg, #f5f5f5 0%, #eee 100%); border-color: #999; }
+    .storage-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .storage-table th {
+      position: sticky;
+      top: 0;
+      background: linear-gradient(180deg, #f5f5f5 0%, #eee 100%);
+      border-bottom: 1px solid #ddd;
+      padding: 6px 10px;
+      text-align: left;
+      font-weight: 600;
+      color: #555;
+      cursor: pointer;
+      user-select: none;
+    }
+    .storage-table th:hover { background: #e8e8e8; }
+    .storage-table td {
+      padding: 4px 10px;
+      border-bottom: 1px solid #f0f0f0;
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: default;
+    }
+    .storage-table tr:hover td { background: #f5f9ff; }
+    .storage-table tr.selected td { background: #e3f2fd; }
+    .storage-table td.editable { cursor: text; }
+    .storage-table td.editable:focus {
+      outline: 2px solid #1976d2;
+      outline-offset: -2px;
+      background: #fff;
+      white-space: normal;
+      word-break: break-all;
+    }
+    .storage-table td.key-col { color: #7b1fa2; font-weight: 500; }
+    .storage-table td.val-col { color: #333; }
+    .storage-table td.action-col { width: 36px; text-align: center; padding: 2px; }
+    .storage-delete-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #bbb;
+      font-size: 14px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .storage-delete-btn:hover { color: #d32f2f; background: #ffebee; }
+  </style>
+
+  <div class="toast" id="toast" style="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:linear-gradient(180deg,#4caf50 0%,#43a047 100%);color:#fff;padding:10px 20px;border-radius:4px;display:none;z-index:1100;box-shadow:0 2px 8px rgba(0,0,0,0.2);">已复制到剪贴板</div>
+  <style>
+    .toast.show {
+      display: block;
+      animation: fadeInOut 2s ease;
+    }
+    @keyframes fadeInOut {
+      0% { opacity: 0; transform: translateX(-50%) translateY(10px); }
+      20% { opacity: 1; transform: translateX(-50%) translateY(0); }
+      80% { opacity: 1; transform: translateX(-50%) translateY(0); }
+      100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+    }
+  </style>
+  <script src="panel.js"></script>
+</body>
+</html>
