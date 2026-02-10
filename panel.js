@@ -13,58 +13,93 @@ function getRequestType(data) {
   const mimeType = (data.response.mimeType || '').toLowerCase();
   const url = data.url.toLowerCase();
   
-  // Fetch/XHR
-  if (mimeType.includes('json') || mimeType.includes('xml') || 
-      data.request.headers?.some(h => h.name.toLowerCase() === 'x-requested-with')) {
+  // Pending 请求且没有 mimeType：根据请求头和 URL 推断类型
+  if (!mimeType) {
+    // 先按 URL 后缀判断静态资源
+    if (url.match(/\.(js|mjs)(\?|$)/)) return 'js';
+    if (url.match(/\.css(\?|$)/)) return 'css';
+    if (url.match(/\.(png|jpg|jpeg|gif|svg|ico|webp|bmp)(\?|$)/)) return 'img';
+    if (url.match(/\.(woff2?|ttf|otf|eot)(\?|$)/)) return 'font';
+    if (url.match(/\.(html?)(\?|$)/)) return 'doc';
+    if (url.match(/\.(mp4|webm|ogg|mp3|wav|m3u8)(\?|$)/)) return 'media';
+    if (url.match(/manifest\.json(\?|$)/)) return 'manifest';
+    if (url.endsWith('.wasm')) return 'wasm';
+    if (url.startsWith('ws://') || url.startsWith('wss://')) return 'ws';
+    
+    // 没有后缀匹配，根据请求头判断
+    const contentType = data.request.headers?.find(h => h.name.toLowerCase() === 'content-type')?.value?.toLowerCase() || '';
+    const accept = data.request.headers?.find(h => h.name.toLowerCase() === 'accept')?.value?.toLowerCase() || '';
+    if (contentType.includes('json') || accept.includes('json') || data.request.postData) {
+      return 'fetch';
+    }
+    // 无 mimeType 且无法判断的 API 路径，默认 fetch
     return 'fetch';
   }
   
-  // Document
+  // 有 mimeType 的情况，按 mimeType 优先分类
+  
+  // Document（放在 fetch 前面，避免 html 被误判）
   if (mimeType.includes('html') || mimeType.includes('xhtml')) {
     return 'doc';
   }
   
   // CSS
-  if (mimeType.includes('css') || url.endsWith('.css')) {
+  if (mimeType.includes('css')) {
     return 'css';
   }
   
   // JavaScript
-  if (mimeType.includes('javascript') || mimeType.includes('ecmascript') || 
-      url.endsWith('.js') || url.endsWith('.mjs')) {
+  if (mimeType.includes('javascript') || mimeType.includes('ecmascript')) {
     return 'js';
   }
   
   // Font
-  if (mimeType.includes('font') || mimeType.includes('woff') || mimeType.includes('ttf') ||
-      url.match(/\.(woff2?|ttf|otf|eot)(\?|$)/)) {
+  if (mimeType.includes('font') || mimeType.includes('woff') || mimeType.includes('ttf')) {
     return 'font';
   }
   
   // Image
-  if (mimeType.includes('image') || url.match(/\.(png|jpg|jpeg|gif|svg|ico|webp|bmp)(\?|$)/)) {
+  if (mimeType.includes('image')) {
     return 'img';
   }
   
   // Media
-  if (mimeType.includes('video') || mimeType.includes('audio') ||
-      url.match(/\.(mp4|webm|ogg|mp3|wav|m3u8)(\?|$)/)) {
+  if (mimeType.includes('video') || mimeType.includes('audio')) {
     return 'media';
   }
   
   // Manifest
-  if (mimeType.includes('manifest') || url.match(/manifest\.json(\?|$)/)) {
+  if (mimeType.includes('manifest')) {
     return 'manifest';
   }
   
-  // WebSocket (通常不会在这里捕获，但保留)
-  if (url.startsWith('ws://') || url.startsWith('wss://')) {
-    return 'ws';
+  // WebAssembly
+  if (mimeType.includes('wasm')) {
+    return 'wasm';
   }
   
-  // WebAssembly
-  if (mimeType.includes('wasm') || url.endsWith('.wasm')) {
-    return 'wasm';
+  // Fetch/XHR — JSON、XML、SSE、以及有 XHR 标记或请求头为 JSON 的
+  if (mimeType.includes('json') || mimeType.includes('xml') || 
+      mimeType.includes('event-stream') ||
+      data.request.headers?.some(h => h.name.toLowerCase() === 'x-requested-with') ||
+      data.request.headers?.some(h => h.name.toLowerCase() === 'content-type' && h.value.toLowerCase().includes('json'))) {
+    return 'fetch';
+  }
+  
+  // URL 后缀兜底
+  if (url.endsWith('.css')) return 'css';
+  if (url.endsWith('.js') || url.endsWith('.mjs')) return 'js';
+  if (url.match(/\.(woff2?|ttf|otf|eot)(\?|$)/)) return 'font';
+  if (url.match(/\.(png|jpg|jpeg|gif|svg|ico|webp|bmp)(\?|$)/)) return 'img';
+  if (url.match(/\.(mp4|webm|ogg|mp3|wav|m3u8)(\?|$)/)) return 'media';
+  if (url.match(/manifest\.json(\?|$)/)) return 'manifest';
+  if (url.startsWith('ws://') || url.startsWith('wss://')) return 'ws';
+  if (url.endsWith('.wasm')) return 'wasm';
+  
+  // text/plain、octet-stream 等模糊类型，根据请求头再判断
+  if (data.request.postData || 
+      data.request.headers?.some(h => h.name.toLowerCase() === 'content-type' && h.value.toLowerCase().includes('json'))) {
+    return 'fetch';
   }
   
   return 'other';
@@ -86,10 +121,222 @@ function formatTime(ms) {
   return (ms / 1000).toFixed(2) + ' s';
 }
 
-// 监听网络请求
-chrome.devtools.network.onRequestFinished.addListener(async (request) => {
-  addRequest(request);
+// ==================== Debugger API: 捕获 pending 请求 ====================
+const pendingRequestMap = new Map(); // debugger requestId -> our internal id
+const tabId = chrome.devtools.inspectedWindow.tabId;
+let debuggerAttached = false;
+
+function attachDebugger() {
+  chrome.debugger.attach({ tabId }, '1.3', () => {
+    if (chrome.runtime.lastError) {
+      console.warn('Debugger attach failed:', chrome.runtime.lastError.message);
+      return;
+    }
+    debuggerAttached = true;
+    chrome.debugger.sendCommand({ tabId }, 'Network.enable', {});
+  });
+}
+
+attachDebugger();
+
+// 页面导航时重新 attach
+chrome.devtools.network.onNavigated.addListener(() => {
+  if (!debuggerAttached) {
+    attachDebugger();
+  }
 });
+
+// 监听 debugger detach（用户关闭 DevTools 等）
+chrome.debugger.onDetach.addListener((source, reason) => {
+  if (source.tabId === tabId) {
+    debuggerAttached = false;
+  }
+});
+
+// 监听 debugger 事件
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  if (source.tabId !== tabId) return;
+
+  if (method === 'Network.requestWillBeSent') {
+    const reqId = params.requestId;
+    const url = params.request.url;
+    const reqMethod = params.request.method;
+
+    // 跳过 data: URL 等
+    if (url.startsWith('data:') || url.startsWith('chrome-extension:')) return;
+
+    const id = Date.now() + Math.random();
+    pendingRequestMap.set(reqId, id);
+
+    // 解析 postData
+    let postData = null;
+    if (params.request.postData) {
+      postData = {
+        text: params.request.postData,
+        mimeType: params.request.headers?.['Content-Type'] || params.request.headers?.['content-type'] || ''
+      };
+    }
+
+    // 将 headers 从 object 转为 array 格式
+    const headersArray = [];
+    if (params.request.headers) {
+      for (const [name, value] of Object.entries(params.request.headers)) {
+        headersArray.push({ name, value });
+      }
+    }
+
+    // 解析 queryString
+    let queryString = [];
+    try {
+      const urlObj = new URL(url);
+      urlObj.searchParams.forEach((value, name) => {
+        queryString.push({ name, value });
+      });
+    } catch {}
+
+    const requestData = {
+      id,
+      url,
+      method: reqMethod,
+      status: 0, // pending
+      _pending: true,
+      _debuggerRequestId: reqId,
+      request: {
+        url,
+        method: reqMethod,
+        httpVersion: '',
+        headers: headersArray,
+        queryString,
+        postData,
+        cookies: []
+      },
+      response: {
+        status: 0,
+        statusText: '(pending)',
+        httpVersion: '',
+        headers: [],
+        cookies: [],
+        content: '',
+        encoding: '',
+        mimeType: '',
+        size: 0
+      },
+      time: -1,
+      startedDateTime: new Date().toISOString()
+    };
+
+    requests.set(id, requestData);
+    renderRequestList();
+  }
+
+  if (method === 'Network.responseReceived') {
+    const reqId = params.requestId;
+    const id = pendingRequestMap.get(reqId);
+    if (id && requests.has(id)) {
+      const data = requests.get(id);
+      const resp = params.response;
+      data.status = resp.status;
+      data.response.status = resp.status;
+      data.response.statusText = resp.statusText || '';
+      data.response.mimeType = resp.mimeType || '';
+      data.response.httpVersion = resp.protocol || '';
+      // 转换 response headers
+      if (resp.headers) {
+        data.response.headers = Object.entries(resp.headers).map(([name, value]) => ({ name, value }));
+      }
+      // 还没完成，保持 pending 标记但更新状态码
+      renderRequestList();
+      // 如果当前选中的就是这个请求，刷新详情
+      if (selectedRequestId === id) renderDetail();
+    }
+  }
+
+  if (method === 'Network.loadingFinished') {
+    const reqId = params.requestId;
+    const id = pendingRequestMap.get(reqId);
+    if (id && requests.has(id)) {
+      const data = requests.get(id);
+      data._pending = false;
+      // 尝试获取 response body
+      chrome.debugger.sendCommand({ tabId }, 'Network.getResponseBody', { requestId: reqId }, (result) => {
+        if (result && !chrome.runtime.lastError) {
+          data.response.content = result.body || '';
+          data.response.encoding = result.base64Encoded ? 'base64' : '';
+          data.response.size = result.body ? result.body.length : 0;
+        }
+        renderRequestList();
+        if (selectedRequestId === id) renderDetail();
+      });
+      pendingRequestMap.delete(reqId);
+    }
+  }
+
+  if (method === 'Network.loadingFailed') {
+    const reqId = params.requestId;
+    const id = pendingRequestMap.get(reqId);
+    if (id && requests.has(id)) {
+      const data = requests.get(id);
+      data._pending = false;
+      data.status = 0;
+      data.response.statusText = params.errorText || '(failed)';
+      renderRequestList();
+      if (selectedRequestId === id) renderDetail();
+      pendingRequestMap.delete(reqId);
+    }
+  }
+});
+
+// 监听已完成的请求（onRequestFinished 仍保留，用于获取完整的 HAR 数据）
+chrome.devtools.network.onRequestFinished.addListener(async (request) => {
+  // 检查是否已经通过 debugger 添加过（通过 URL 匹配，不管是否还在 pending）
+  const url = request.request.url;
+  const existingDebugger = Array.from(requests.values()).find(r =>
+    r.url === url && r._debuggerRequestId
+  );
+
+  if (existingDebugger) {
+    // 用完整的 HAR 数据更新 debugger 捕获的请求（HAR 编码更可靠）
+    const id = existingDebugger.id;
+    request.getContent ? request.getContent((content, encoding) => {
+      updateFromHAR(id, request, content, encoding);
+    }) : updateFromHAR(id, request, request.response.content?.text || '', request.response.content?.encoding || '');
+  } else {
+    addRequest(request);
+  }
+});
+
+function updateFromHAR(id, request, content, encoding) {
+  const data = requests.get(id);
+  if (!data) return;
+
+  data._pending = false;
+  data.status = request.response.status;
+  data.request = {
+    url: request.request.url,
+    method: request.request.method,
+    httpVersion: request.request.httpVersion,
+    headers: request.request.headers,
+    queryString: request.request.queryString,
+    postData: request.request.postData,
+    cookies: request.request.cookies
+  };
+  data.response = {
+    status: request.response.status,
+    statusText: request.response.statusText,
+    httpVersion: request.response.httpVersion,
+    headers: request.response.headers,
+    cookies: request.response.cookies,
+    content: content,
+    encoding: encoding,
+    mimeType: request.response.content?.mimeType,
+    size: request.response.content?.size || (content ? content.length : 0)
+  };
+  data.time = request.time;
+  data.startedDateTime = request.startedDateTime;
+
+  renderRequestList();
+  if (selectedRequestId === id) renderDetail();
+}
 
 // 获取打开 DevTools 之前的请求
 chrome.devtools.network.getHAR((harLog) => {
@@ -109,9 +356,9 @@ function addRequest(request) {
   
   // 检查是否已存在相同 URL 和时间的请求（避免重复）
   const existingRequest = Array.from(requests.values()).find(r => 
-    r.url === url && r.startedDateTime === request.startedDateTime
+    r.url === url && (r.startedDateTime === request.startedDateTime || r._debuggerRequestId)
   );
-  if (existingRequest) return;
+  if (existingRequest && !existingRequest._pending) return;
   
   request.getContent ? request.getContent((content, encoding) => {
     saveRequest(id, url, method, status, request, content, encoding);
@@ -175,18 +422,20 @@ function renderRequestList() {
   requestList.innerHTML = filteredRequests.map(r => {
     const urlObj = new URL(r.url);
     const displayUrl = urlObj.pathname + urlObj.search;
-    const statusClass = r.status >= 200 && r.status < 400 ? 'success' : 'error';
-    const urlClass = r.status >= 400 ? 'error' : '';
+    const isPending = r._pending;
+    const statusClass = isPending ? 'pending' : (r.status >= 200 && r.status < 400 ? 'success' : 'error');
+    const urlClass = (!isPending && r.status >= 400) ? 'error' : '';
     const selected = r.id === selectedRequestId ? 'selected' : '';
-    const size = formatSize(r.response.size || 0);
-    const time = formatTime(r.time);
+    const size = isPending ? '-' : formatSize(r.response.size || 0);
+    const time = isPending ? '(pending)' : formatTime(r.time);
+    const statusText = isPending ? (r.status > 0 ? r.status + ' …' : '(pending)') : r.status;
     
     return `
       <div class="request-item ${selected}" data-id="${r.id}">
         <div class="request-row">
           <span class="method ${r.method}">${r.method}</span>
           <span class="url ${urlClass}" title="${r.url}">${displayUrl}</span>
-          <span class="status ${statusClass}">${r.status}</span>
+          <span class="status ${statusClass}">${statusText}</span>
         </div>
         <div class="request-actions">
           <button class="action-btn primary" data-action="copyAll" data-id="${r.id}">复制全部</button>
