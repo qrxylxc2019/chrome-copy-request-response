@@ -172,6 +172,7 @@ function formatTime(ms) {
 
 // ==================== Debugger API: 捕获 pending 请求 ====================
 const pendingRequestMap = new Map(); // debugger requestId -> our internal id
+const allNetworkRequestIds = new Map(); // url -> debugger requestId (保留所有已完成的请求ID，用于下载源码)
 const tabId = chrome.devtools.inspectedWindow.tabId;
 let debuggerAttached = false;
 
@@ -183,6 +184,7 @@ function attachDebugger() {
     }
     debuggerAttached = true;
     chrome.debugger.sendCommand({ tabId }, 'Network.enable', {});
+    chrome.debugger.sendCommand({ tabId }, 'Page.enable', {});
   });
 }
 
@@ -216,6 +218,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 
     const id = Date.now() + Math.random();
     pendingRequestMap.set(reqId, id);
+    allNetworkRequestIds.set(url, reqId);
 
     // 解析 postData
     let postData = null;
@@ -1343,4 +1346,344 @@ async function copyToClipboard(text) {
       deleteStorageItem(selectedStorageKey);
     }
   });
+})();
+
+
+// ==================== Download Sources ====================
+(function() {
+  const downloadBtn = document.getElementById('downloadSourcesBtn');
+  if (!downloadBtn) return;
+
+  // URL -> 本地路径
+  function urlToPath(url) {
+    try {
+      const u = new URL(url);
+      let p = u.hostname + (u.pathname === '/' ? '/index.html' : u.pathname);
+      if (u.search) p += u.search.replace(/[?&=]/g, '_');
+      return p.replace(/\/+/g, '/').replace(/^\//, '');
+    } catch {
+      return url.replace(/[^a-zA-Z0-9._\-\/]/g, '_');
+    }
+  }
+
+  // 策略1: Page.getResourceTree 获取资源列表
+  function getResourceTree() {
+    return new Promise((resolve) => {
+      if (!debuggerAttached) { resolve([]); return; }
+      // 确保 Page domain 已启用
+      chrome.debugger.sendCommand({ tabId }, 'Page.enable', {}, () => {
+        if (chrome.runtime.lastError) {
+          console.warn('[DownloadSources] Page.enable failed:', chrome.runtime.lastError.message);
+        }
+        chrome.debugger.sendCommand({ tabId }, 'Page.getResourceTree', {}, (result) => {
+          if (chrome.runtime.lastError) {
+            console.warn('[DownloadSources] Page.getResourceTree failed:', chrome.runtime.lastError.message);
+            resolve([]);
+            return;
+          }
+          if (!result || !result.frameTree) { resolve([]); return; }
+          const resources = [];
+          const seen = new Set();
+          function walk(ft) {
+            const frameId = ft.frame.id;
+            if (ft.resources) {
+              ft.resources.forEach(r => {
+                if (r.url.startsWith('data:') || r.url.startsWith('chrome-extension:') || r.url.startsWith('about:') || r.url.startsWith('blob:')) return;
+                if (seen.has(r.url)) return;
+                seen.add(r.url);
+                resources.push({ url: r.url, path: urlToPath(r.url), frameId });
+              });
+            }
+            if (ft.childFrames) ft.childFrames.forEach(c => walk(c));
+          }
+          walk(result.frameTree);
+          resolve(resources);
+        });
+      });
+    });
+  }
+
+  // 策略2: 从已捕获的 Network 请求中补充（包含动态加载的 chunks）
+  function getNetworkResources(existingUrls) {
+    const extra = [];
+    // 从 panel 已记录的 requests Map 中获取
+    for (const [, r] of requests) {
+      if (existingUrls.has(r.url)) continue;
+      if (r.url.startsWith('data:') || r.url.startsWith('chrome-extension:') || r.url.startsWith('about:') || r.url.startsWith('blob:')) continue;
+      if (r._pending) continue;
+      existingUrls.add(r.url);
+      extra.push({ url: r.url, path: urlToPath(r.url), hasContent: !!(r.response && r.response.content) });
+    }
+    return extra;
+  }
+
+  // 获取单个资源内容 — 多重回退策略
+  function getContent(url, frameId) {
+    return new Promise((resolve) => {
+      // 1. 先检查 panel 已缓存的 requests 中是否有内容
+      for (const [, r] of requests) {
+        if (r.url === url && r.response && r.response.content && r.response.content.length > 0) {
+          resolve({ content: r.response.content, base64Encoded: false });
+          return;
+        }
+      }
+
+      // 2. 尝试 Page.getResourceContent
+      if (debuggerAttached && frameId) {
+        chrome.debugger.sendCommand({ tabId }, 'Page.getResourceContent', { frameId, url }, (result) => {
+          if (!chrome.runtime.lastError && result && result.content && result.content.length > 0) {
+            resolve({ content: result.content, base64Encoded: result.base64Encoded || false });
+            return;
+          }
+          // 3. 尝试 Network.getResponseBody
+          tryNetworkGetBody(url, resolve);
+        });
+      } else {
+        tryNetworkGetBody(url, resolve);
+      }
+    });
+  }
+
+  function tryNetworkGetBody(url, resolve) {
+    const reqId = allNetworkRequestIds.get(url);
+    if (debuggerAttached && reqId) {
+      chrome.debugger.sendCommand({ tabId }, 'Network.getResponseBody', { requestId: reqId }, (result) => {
+        if (!chrome.runtime.lastError && result && result.body && result.body.length > 0) {
+          let body = result.body;
+          if (result.base64Encoded) {
+            resolve({ content: body, base64Encoded: true });
+          } else {
+            body = tryFixGarbledText(body);
+            resolve({ content: body, base64Encoded: false });
+          }
+          return;
+        }
+        // 4. 最后回退：通过页面 fetch 重新请求
+        tryFetchFallback(url, resolve);
+      });
+    } else {
+      tryFetchFallback(url, resolve);
+    }
+  }
+
+  function tryFetchFallback(url, resolve) {
+    const code = `
+      (async function() {
+        try {
+          const r = await fetch(${JSON.stringify(url)}, { cache: 'force-cache', credentials: 'same-origin' });
+          if (!r.ok) return null;
+          const t = await r.text();
+          return t;
+        } catch(e) { return null; }
+      })();
+    `;
+    chrome.devtools.inspectedWindow.eval(code, (result, isException) => {
+      if (!isException && result && result.length > 0) {
+        resolve({ content: result, base64Encoded: false });
+      } else {
+        resolve(null);
+      }
+    });
+  }
+
+  downloadBtn.addEventListener('click', async () => {
+    downloadBtn.disabled = true;
+    downloadBtn.textContent = '⏳ 收集资源列表...';
+    console.log('[DownloadSources] 开始收集资源...');
+
+    try {
+      // 收集所有资源 URL
+      const treeResources = await getResourceTree();
+      console.log('[DownloadSources] ResourceTree 返回:', treeResources.length, '个资源');
+      const existingUrls = new Set(treeResources.map(r => r.url));
+
+      // 从 Network 请求中补充
+      const networkResources = getNetworkResources(existingUrls);
+      console.log('[DownloadSources] Network 补充:', networkResources.length, '个资源');
+
+      // 合并，获取主 frameId 用于 Page.getResourceContent
+      let mainFrameId = treeResources.length > 0 ? treeResources[0].frameId : null;
+      const allResources = [
+        ...treeResources,
+        ...networkResources.map(r => ({ ...r, frameId: mainFrameId }))
+      ];
+
+      if (allResources.length === 0) {
+        showToast('未找到任何资源，请确保页面已加载完成');
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = '💾 下载源码';
+        return;
+      }
+
+      console.log('[DownloadSources] 总计:', allResources.length, '个资源，开始下载内容...');
+
+      downloadBtn.textContent = `⏳ 下载中 0/${allResources.length}...`;
+
+      const files = [];
+      let done = 0;
+      let failed = 0;
+      const concurrency = 6;
+      let idx = 0;
+
+      async function worker() {
+        while (idx < allResources.length) {
+          const i = idx++;
+          const res = allResources[i];
+          try {
+            const content = await getContent(res.url, res.frameId);
+            if (content !== null && content.content && content.content.length > 0) {
+              files.push({ path: res.path, content: content.content, base64: content.base64Encoded });
+            } else {
+              failed++;
+            }
+          } catch (e) {
+            failed++;
+            console.warn('Failed to get:', res.url, e);
+          }
+          done++;
+          downloadBtn.textContent = `⏳ 下载中 ${done}/${allResources.length}...`;
+        }
+      }
+
+      const workers = [];
+      for (let w = 0; w < concurrency; w++) workers.push(worker());
+      await Promise.all(workers);
+
+      if (files.length === 0) {
+        showToast('没有可下载的资源内容');
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = '💾 下载源码';
+        return;
+      }
+
+      downloadBtn.textContent = '⏳ 打包中...';
+
+      const zipBlob = buildZip(files);
+      const blobUrl = URL.createObjectURL(zipBlob);
+
+      chrome.devtools.inspectedWindow.eval('location.hostname', (hostname) => {
+        const filename = (hostname || 'sources') + '_sources.zip';
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+
+        const msg = failed > 0
+          ? `已下载 ${files.length} 个文件，${failed} 个获取失败`
+          : `已下载 ${files.length} 个文件`;
+        showToast(msg);
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = '💾 下载源码';
+      });
+
+    } catch (err) {
+      console.error('Download sources error:', err);
+      showToast('下载失败: ' + err.message);
+      downloadBtn.disabled = false;
+      downloadBtn.textContent = '💾 下载源码';
+    }
+  });
+
+  // ==================== 纯 JS ZIP 打包 ====================
+  function buildZip(files) {
+    const localFiles = [];
+    const centralDir = [];
+    let offset = 0;
+
+    for (const file of files) {
+      let data;
+      if (file.base64) {
+        data = base64ToUint8Array(file.content);
+      } else {
+        data = new TextEncoder().encode(file.content);
+      }
+
+      const pathBytes = new TextEncoder().encode(file.path);
+      const crc = crc32(data);
+
+      const localHeader = new Uint8Array(30 + pathBytes.length);
+      const lv = new DataView(localHeader.buffer);
+      lv.setUint32(0, 0x04034b50, true);
+      lv.setUint16(4, 20, true);
+      lv.setUint16(6, 0x0800, true);
+      lv.setUint16(8, 0, true);
+      lv.setUint16(10, 0, true);
+      lv.setUint16(12, 0, true);
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, data.length, true);
+      lv.setUint32(22, data.length, true);
+      lv.setUint16(26, pathBytes.length, true);
+      lv.setUint16(28, 0, true);
+      localHeader.set(pathBytes, 30);
+      localFiles.push(localHeader, data);
+
+      const cdEntry = new Uint8Array(46 + pathBytes.length);
+      const cv = new DataView(cdEntry.buffer);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 20, true);
+      cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0x0800, true);
+      cv.setUint16(10, 0, true);
+      cv.setUint16(12, 0, true);
+      cv.setUint16(14, 0, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, data.length, true);
+      cv.setUint32(24, data.length, true);
+      cv.setUint16(28, pathBytes.length, true);
+      cv.setUint16(30, 0, true);
+      cv.setUint16(32, 0, true);
+      cv.setUint16(34, 0, true);
+      cv.setUint16(36, 0, true);
+      cv.setUint32(38, 0, true);
+      cv.setUint32(42, offset, true);
+      cdEntry.set(pathBytes, 46);
+      centralDir.push(cdEntry);
+      offset += localHeader.length + data.length;
+    }
+
+    const cdSize = centralDir.reduce((s, e) => s + e.length, 0);
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(4, 0, true);
+    ev.setUint16(6, 0, true);
+    ev.setUint16(8, centralDir.length, true);
+    ev.setUint16(10, centralDir.length, true);
+    ev.setUint32(12, cdSize, true);
+    ev.setUint32(16, offset, true);
+    ev.setUint16(20, 0, true);
+
+    const parts = [...localFiles, ...centralDir, eocd];
+    const totalSize = parts.reduce((s, p) => s + p.length, 0);
+    const zipData = new Uint8Array(totalSize);
+    let pos = 0;
+    for (const part of parts) { zipData.set(part, pos); pos += part.length; }
+    return new Blob([zipData], { type: 'application/zip' });
+  }
+
+  function base64ToUint8Array(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  const crc32Table = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c;
+    }
+    return t;
+  })();
+
+  function crc32(data) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < data.length; i++) c = crc32Table[(c ^ data[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
 })();
