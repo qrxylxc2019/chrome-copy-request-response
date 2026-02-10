@@ -1,3 +1,61 @@
+// 检测并修复 Chrome API 返回的乱码文本
+// Chrome 的 Network.getResponseBody 对 SSE 等流式响应可能用错误编码解析 UTF-8 内容
+// 表现为：UTF-8 字节被当作 Windows-1252 逐字节映射到 Unicode 码点
+// Windows-1252 在 0x80-0x9F 范围有特殊映射（不同于 Latin-1），导致部分字节
+// 被映射到 U+0152, U+2014, U+201C 等超过 0xFF 的码点
+
+// Windows-1252 特殊映射表：Unicode 码点 -> 原始字节值
+const WIN1252_SPECIAL = {
+  0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85,
+  0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A,
+  0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92,
+  0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+  0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C,
+  0x017E: 0x9E, 0x0178: 0x9F
+};
+
+function tryFixGarbledText(str) {
+  if (!str) return str;
+  // 快速检查：如果字符串中没有 0x80+ 范围的字符，不需要修复
+  let hasHighBytes = false;
+  let canRecover = true;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code >= 0x80) hasHighBytes = true;
+    // 检查是否所有字符都可以映射回单字节
+    if (code > 0xff && !WIN1252_SPECIAL[code]) {
+      canRecover = false;
+      break;
+    }
+  }
+  if (!hasHighBytes) return str; // 纯 ASCII，无需修复
+  if (!canRecover) return str;   // 包含无法映射回字节的真正 Unicode 字符
+  
+  // 将 Windows-1252 解码的字符映射回原始字节，然后用 UTF-8 重新解码
+  try {
+    const bytes = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) {
+      const code = str.charCodeAt(i);
+      if (code <= 0xff) {
+        bytes[i] = code;
+      } else {
+        // Windows-1252 特殊字符，映射回原始字节
+        const originalByte = WIN1252_SPECIAL[code];
+        if (originalByte !== undefined) {
+          bytes[i] = originalByte;
+        } else {
+          return str; // 无法映射，放弃修复
+        }
+      }
+    }
+    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    if (decoded !== str) return decoded;
+  } catch {
+    // UTF-8 解码失败，返回原文
+  }
+  return str;
+}
+
 const requests = new Map();
 let selectedRequestId = null;
 let currentTab = 'headers';
@@ -13,18 +71,19 @@ function getRequestType(data) {
   const mimeType = (data.response.mimeType || '').toLowerCase();
   const url = data.url.toLowerCase();
   
+  // 优先：对明确的静态资源后缀，URL 后缀优先于 mimeType（避免 dev server 错误 MIME）
+  if (url.match(/\.css(\?|$)/)) return 'css';
+  if (url.match(/\.(js|mjs)(\?|$)/)) return 'js';
+  if (url.match(/\.(png|jpg|jpeg|gif|svg|ico|webp|bmp)(\?|$)/)) return 'img';
+  if (url.match(/\.(woff2?|ttf|otf|eot)(\?|$)/)) return 'font';
+  if (url.match(/\.(mp4|webm|ogg|mp3|wav|m3u8)(\?|$)/)) return 'media';
+  if (url.endsWith('.wasm')) return 'wasm';
+  if (url.startsWith('ws://') || url.startsWith('wss://')) return 'ws';
+  
   // Pending 请求且没有 mimeType：根据请求头和 URL 推断类型
   if (!mimeType) {
-    // 先按 URL 后缀判断静态资源
-    if (url.match(/\.(js|mjs)(\?|$)/)) return 'js';
-    if (url.match(/\.css(\?|$)/)) return 'css';
-    if (url.match(/\.(png|jpg|jpeg|gif|svg|ico|webp|bmp)(\?|$)/)) return 'img';
-    if (url.match(/\.(woff2?|ttf|otf|eot)(\?|$)/)) return 'font';
     if (url.match(/\.(html?)(\?|$)/)) return 'doc';
-    if (url.match(/\.(mp4|webm|ogg|mp3|wav|m3u8)(\?|$)/)) return 'media';
     if (url.match(/manifest\.json(\?|$)/)) return 'manifest';
-    if (url.endsWith('.wasm')) return 'wasm';
-    if (url.startsWith('ws://') || url.startsWith('wss://')) return 'ws';
     
     // 没有后缀匹配，根据请求头判断
     const contentType = data.request.headers?.find(h => h.name.toLowerCase() === 'content-type')?.value?.toLowerCase() || '';
@@ -85,16 +144,6 @@ function getRequestType(data) {
       data.request.headers?.some(h => h.name.toLowerCase() === 'content-type' && h.value.toLowerCase().includes('json'))) {
     return 'fetch';
   }
-  
-  // URL 后缀兜底
-  if (url.endsWith('.css')) return 'css';
-  if (url.endsWith('.js') || url.endsWith('.mjs')) return 'js';
-  if (url.match(/\.(woff2?|ttf|otf|eot)(\?|$)/)) return 'font';
-  if (url.match(/\.(png|jpg|jpeg|gif|svg|ico|webp|bmp)(\?|$)/)) return 'img';
-  if (url.match(/\.(mp4|webm|ogg|mp3|wav|m3u8)(\?|$)/)) return 'media';
-  if (url.match(/manifest\.json(\?|$)/)) return 'manifest';
-  if (url.startsWith('ws://') || url.startsWith('wss://')) return 'ws';
-  if (url.endsWith('.wasm')) return 'wasm';
   
   // text/plain、octet-stream 等模糊类型，根据请求头再判断
   if (data.request.postData || 
@@ -257,12 +306,32 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     if (id && requests.has(id)) {
       const data = requests.get(id);
       data._pending = false;
-      // 尝试获取 response body
+      // 获取 response body — 使用 Fetch.getResponseBody 或在页面上下文中重新获取
+      // Chrome 的 Network.getResponseBody 对 SSE 等流式响应的编码处理有 bug
+      // 策略：先用 Network.getResponseBody 获取，然后对文本结果做强制 UTF-8 修复
       chrome.debugger.sendCommand({ tabId }, 'Network.getResponseBody', { requestId: reqId }, (result) => {
         if (result && !chrome.runtime.lastError) {
-          data.response.content = result.body || '';
-          data.response.encoding = result.base64Encoded ? 'base64' : '';
-          data.response.size = result.body ? result.body.length : 0;
+          let body = result.body || '';
+          if (result.base64Encoded && body) {
+            // base64 编码：解码为 UTF-8
+            try {
+              const binaryStr = atob(body);
+              const bytes = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+              }
+              body = new TextDecoder('utf-8').decode(bytes);
+            } catch (e) {
+              console.warn('Base64 decode failed:', e);
+            }
+          } else if (body) {
+            // 非 base64 文本模式：Chrome 可能用错误编码解析了 UTF-8 内容
+            // 检查是否所有字符都在 0x00-0xFF 范围（Latin-1 损坏的特征）
+            body = tryFixGarbledText(body);
+          }
+          data.response.content = body;
+          data.response.encoding = '';
+          data.response.size = body ? body.length : 0;
         }
         renderRequestList();
         if (selectedRequestId === id) renderDetail();
@@ -309,7 +378,11 @@ function updateFromHAR(id, request, content, encoding) {
   const data = requests.get(id);
   if (!data) return;
 
+  const debuggerRequestId = data._debuggerRequestId;
+  const existingContent = data.response.content;
+
   data._pending = false;
+  data._debuggerRequestId = debuggerRequestId;
   data.status = request.response.status;
   data.request = {
     url: request.request.url,
@@ -320,16 +393,29 @@ function updateFromHAR(id, request, content, encoding) {
     postData: request.request.postData,
     cookies: request.request.cookies
   };
+
+  // 检测 HAR content 是否乱码（UTF-8 被当 Latin-1 解读的特征）
+  let finalContent;
+  if (content) {
+    finalContent = tryFixGarbledText(content);
+    // 如果修复没变化但 debugger 已有内容，优先用 debugger 的
+    if (finalContent === content && existingContent && existingContent !== content) {
+      finalContent = existingContent;
+    }
+  } else {
+    finalContent = content || existingContent || '';
+  }
+
   data.response = {
     status: request.response.status,
     statusText: request.response.statusText,
     httpVersion: request.response.httpVersion,
     headers: request.response.headers,
     cookies: request.response.cookies,
-    content: content,
+    content: finalContent,
     encoding: encoding,
     mimeType: request.response.content?.mimeType,
-    size: request.response.content?.size || (content ? content.length : 0)
+    size: request.response.content?.size || (finalContent ? finalContent.length : 0)
   };
   data.time = request.time;
   data.startedDateTime = request.startedDateTime;
@@ -366,6 +452,12 @@ function addRequest(request) {
 }
 
 function saveRequest(id, url, method, status, request, content, encoding) {
+  // 修复可能的 UTF-8 乱码
+  let fixedContent = content;
+  if (content) {
+    fixedContent = tryFixGarbledText(content);
+  }
+
   const requestData = {
     id,
     url,
@@ -386,10 +478,10 @@ function saveRequest(id, url, method, status, request, content, encoding) {
       httpVersion: request.response.httpVersion,
       headers: request.response.headers,
       cookies: request.response.cookies,
-      content: content,
+      content: fixedContent,
       encoding: encoding,
       mimeType: request.response.content?.mimeType,
-      size: request.response.content?.size || (content ? content.length : 0)
+      size: request.response.content?.size || (fixedContent ? fixedContent.length : 0)
     },
     time: request.time,
     startedDateTime: request.startedDateTime
