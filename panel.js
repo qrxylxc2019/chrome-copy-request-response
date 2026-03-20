@@ -62,12 +62,15 @@ let currentTab = 'headers';
 let currentTypeFilter = 'fetch';
 let copiedRequestId = null;
 let copiedResetTimer = null;
+let detailCopied = false;
+let detailCopiedResetTimer = null;
 
 const requestList = document.getElementById('requestList');
 const filterInput = document.getElementById('filter');
 const detailContent = document.getElementById('detailContent');
 const detailPanel = document.getElementById('detailPanel');
 const detailCloseBtn = document.getElementById('detailCloseBtn');
+const detailCopyBtn = document.getElementById('detailCopyBtn');
 const resizerEl = document.getElementById('resizer');
 const toast = document.getElementById('toast');
 let detailPanelVisible = false;
@@ -89,6 +92,27 @@ function hideDetailPanel() {
 detailCloseBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   hideDetailPanel();
+});
+
+detailCopyBtn.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  if (!selectedRequestId) {
+    showToast('请先选择一个请求');
+    return;
+  }
+  const data = requests.get(selectedRequestId);
+  if (!data) return;
+  copyToClipboard(formatCurrentTabData(data));
+  detailCopied = true;
+  detailCopyBtn.classList.add('copied');
+  detailCopyBtn.textContent = '✓';
+  if (detailCopiedResetTimer) clearTimeout(detailCopiedResetTimer);
+  detailCopiedResetTimer = setTimeout(() => {
+    detailCopied = false;
+    detailCopiedResetTimer = null;
+    detailCopyBtn.classList.remove('copied');
+    detailCopyBtn.textContent = '⧉';
+  }, 2000);
 });
 
 hideDetailPanel();
@@ -847,6 +871,97 @@ function showToast(message) {
   toast.classList.remove('show');
   void toast.offsetWidth;
   toast.classList.add('show');
+}
+
+// 格式化当前 tab 的数据用于复制
+function formatCurrentTabData(data) {
+  const lines = [];
+
+  switch (currentTab) {
+    case 'headers':
+      lines.push('========== HEADERS ==========');
+      lines.push('');
+      lines.push('--- General ---');
+      lines.push(`Request URL: ${data.url}`);
+      lines.push(`Request Method: ${data.method}`);
+      lines.push(`Status Code: ${data.response.status} ${data.response.statusText}`);
+      lines.push('');
+
+      if (data.response.headers && data.response.headers.length > 0) {
+        lines.push('--- Response Headers ---');
+        data.response.headers.forEach(h => {
+          lines.push(`${h.name}: ${h.value}`);
+        });
+        lines.push('');
+      }
+
+      if (data.request.headers && data.request.headers.length > 0) {
+        lines.push('--- Request Headers ---');
+        data.request.headers.forEach(h => {
+          lines.push(`${h.name}: ${h.value}`);
+        });
+        lines.push('');
+      }
+
+      if (data.request.queryString && data.request.queryString.length > 0) {
+        lines.push('--- Query String Parameters ---');
+        data.request.queryString.forEach(q => {
+          lines.push(`${q.name}: ${q.value}`);
+        });
+      }
+      break;
+
+    case 'payload':
+      lines.push('========== PAYLOAD ==========');
+      lines.push('');
+
+      if (data.request.queryString && data.request.queryString.length > 0) {
+        lines.push('--- Query String Parameters ---');
+        data.request.queryString.forEach(q => {
+          lines.push(`${q.name}: ${q.value}`);
+        });
+        lines.push('');
+      }
+
+      if (data.request.postData) {
+        lines.push('--- Request Payload ---');
+        if (data.request.postData.text) {
+          try {
+            const json = JSON.parse(data.request.postData.text);
+            lines.push(JSON.stringify(json, null, 2));
+          } catch {
+            lines.push(data.request.postData.text);
+          }
+        }
+        if (data.request.postData.params && data.request.postData.params.length > 0) {
+          data.request.postData.params.forEach(p => {
+            lines.push(`${p.name}: ${p.value}`);
+          });
+        }
+      } else {
+        lines.push('(无请求负载)');
+      }
+      break;
+
+    case 'response':
+    case 'preview':
+      lines.push('========== RESPONSE ==========');
+      lines.push('');
+
+      if (data.response.content) {
+        try {
+          const json = JSON.parse(data.response.content);
+          lines.push(JSON.stringify(json, null, 2));
+        } catch {
+          lines.push(data.response.content);
+        }
+      } else {
+        lines.push('(响应内容为空)');
+      }
+      break;
+  }
+
+  return lines.join('\n');
 }
 
 // 格式化复制全部 - 简洁格式
