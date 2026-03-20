@@ -179,7 +179,7 @@
       cursor: ew-resize !important;
     }
     .request-item {
-      padding: 2px 5px;
+      padding: 4px 6px;
       border-bottom: 1px solid #eee;
       cursor: pointer;
       background: linear-gradient(180deg, #fff 0%, #fafafa 100%);
@@ -194,6 +194,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      min-width: 0;
     }
     .method {
       font-weight: bold;
@@ -202,6 +203,7 @@
       padding: 2px 6px;
       border-radius: 3px;
       text-align: center;
+      flex-shrink: 0;
     }
     .method.GET { color: #2e7d32; background: #e8f5e9; }
     .method.POST { color: #f57c00; background: #fff3e0; }
@@ -210,6 +212,7 @@
     .method.PATCH { color: #7b1fa2; background: #f3e5f5; }
     .url {
       flex: 1;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -223,6 +226,7 @@
       min-width: 35px;
       text-align: right;
       font-weight: 500;
+      flex-shrink: 0;
     }
     .status.success { color: #2e7d32; }
     .status.error { color: #c62828; }
@@ -232,50 +236,42 @@
       min-width: 55px;
       text-align: right;
       color: #666;
+      flex-shrink: 0;
     }
     .time {
       font-size: 11px;
       min-width: 55px;
       text-align: right;
       color: #666;
+      flex-shrink: 0;
     }
-    
-    /* 请求行内按钮 */
-    .request-actions {
-      display: flex;
-      gap: 6px;
-      margin-top: 6px;
-      padding-top: 6px;
-      border-top: 1px dashed #ddd;
-    }
-    .action-btn {
-      padding: 4px 10px;
-      border: 1px solid #ccc;
-      border-radius: 3px;
+
+    /* 复制图标按钮 */
+    .copy-icon-btn {
+      width: 24px;
+      height: 24px;
+      min-width: 24px;
+      padding: 0;
+      border: 1px solid #4caf50;
+      border-radius: 4px;
       cursor: pointer;
-      font-size: 10px;
-      background: linear-gradient(180deg, #fff 0%, #f8f8f8 100%);
-      color: #555;
-    }
-    .action-btn:hover {
-      background: linear-gradient(180deg, #f0f0f0 0%, #e8e8e8 100%);
-      border-color: #999;
-    }
-    .action-btn.primary {
-      background: linear-gradient(180deg, #1976d2 0%, #1565c0 100%);
+      font-size: 14px;
+      font-weight: bold;
+      background: linear-gradient(180deg, #4caf50 0%, #43a047 100%);
       color: #fff;
-      border-color: #1565c0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.2s;
     }
-    .action-btn.primary:hover {
-      background: linear-gradient(180deg, #1565c0 0%, #0d47a1 100%);
+    .copy-icon-btn:hover {
+      background: linear-gradient(180deg, #43a047 0%, #388e3c 100%);
+      border-color: #388e3c;
+      transform: scale(1.05);
     }
-    .action-btn.replay {
-      background: linear-gradient(180deg, #ff9800 0%, #f57c00 100%);
-      color: #fff;
-      border-color: #f57c00;
-    }
-    .action-btn.replay:hover {
-      background: linear-gradient(180deg, #f57c00 0%, #e65100 100%);
+    .copy-icon-btn:active {
+      transform: scale(0.95);
     }
     .detail-panel {
       flex: 1;

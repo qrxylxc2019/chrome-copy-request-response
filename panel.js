@@ -524,19 +524,14 @@ function renderRequestList() {
     const size = isPending ? '-' : formatSize(r.response.size || 0);
     const time = isPending ? '(pending)' : formatTime(r.time);
     const statusText = isPending ? (r.status > 0 ? r.status + ' …' : '(pending)') : r.status;
-    
+
     return `
       <div class="request-item ${selected}" data-id="${r.id}">
         <div class="request-row">
+          <button class="copy-icon-btn" data-action="copyAll" data-id="${r.id}" title="复制全部">✓</button>
           <span class="method ${r.method}">${r.method}</span>
           <span class="url ${urlClass}" title="${r.url}">${displayUrl}</span>
           <span class="status ${statusClass}">${statusText}</span>
-        </div>
-        <div class="request-actions">
-          <button class="action-btn primary" data-action="copyAll" data-id="${r.id}">复制全部</button>
-          <button class="action-btn" data-action="copyRequest" data-id="${r.id}">请求</button>
-          <button class="action-btn" data-action="copyResponse" data-id="${r.id}">响应</button>
-          <button class="action-btn replay" data-action="replay" data-id="${r.id}">重新请求</button>
           <span class="size">${size}</span>
           <span class="time">${time}</span>
         </div>
@@ -547,7 +542,7 @@ function renderRequestList() {
 
 // 点击选择请求
 requestList.addEventListener('click', (e) => {
-  const actionBtn = e.target.closest('.action-btn');
+  const actionBtn = e.target.closest('.copy-icon-btn');
   if (actionBtn) {
     e.stopPropagation();
     const action = actionBtn.dataset.action;
