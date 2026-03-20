@@ -260,12 +260,12 @@
       height: 24px;
       min-width: 24px;
       padding: 0;
-      border: 1px solid #4caf50;
+      border: 1px solid #1976d2;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: bold;
-      background: linear-gradient(180deg, #4caf50 0%, #43a047 100%);
+      background: linear-gradient(180deg, #1976d2 0%, #1565c0 100%);
       color: #fff;
       display: flex;
       align-items: center;
@@ -274,12 +274,20 @@
       transition: all 0.2s;
     }
     .copy-icon-btn:hover {
-      background: linear-gradient(180deg, #43a047 0%, #388e3c 100%);
-      border-color: #388e3c;
+      background: linear-gradient(180deg, #1565c0 0%, #0d47a1 100%);
+      border-color: #0d47a1;
       transform: scale(1.05);
     }
     .copy-icon-btn:active {
       transform: scale(0.95);
+    }
+    .copy-icon-btn.copied {
+      border-color: #4caf50;
+      background: linear-gradient(180deg, #4caf50 0%, #43a047 100%);
+    }
+    .copy-icon-btn.copied:hover {
+      background: linear-gradient(180deg, #43a047 0%, #388e3c 100%);
+      border-color: #388e3c;
     }
     .detail-panel {
       flex: 1;

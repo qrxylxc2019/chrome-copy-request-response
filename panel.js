@@ -60,6 +60,8 @@ const requests = new Map();
 let selectedRequestId = null;
 let currentTab = 'headers';
 let currentTypeFilter = 'fetch';
+let copiedRequestId = null;
+let copiedResetTimer = null;
 
 const requestList = document.getElementById('requestList');
 const filterInput = document.getElementById('filter');
@@ -553,7 +555,7 @@ function renderRequestList() {
     return `
       <div class="request-item ${selected}" data-id="${r.id}">
         <div class="request-row">
-          <button class="copy-icon-btn" data-action="copyAll" data-id="${r.id}" title="复制全部">✓</button>
+          <button class="copy-icon-btn ${copiedRequestId === r.id ? 'copied' : ''}" data-action="copyAll" data-id="${r.id}" title="复制全部">${copiedRequestId === r.id ? '✓' : '⧉'}</button>
           <span class="method ${r.method}">${r.method}</span>
           <span class="url ${urlClass}" title="${r.url}">${displayUrl}</span>
           <span class="status ${statusClass}">${statusText}</span>
@@ -576,6 +578,14 @@ requestList.addEventListener('click', (e) => {
     
     if (action === 'copyAll') {
       copyToClipboard(formatCopyAll(data));
+      copiedRequestId = id;
+      if (copiedResetTimer) clearTimeout(copiedResetTimer);
+      renderRequestList();
+      copiedResetTimer = setTimeout(() => {
+        copiedRequestId = null;
+        copiedResetTimer = null;
+        renderRequestList();
+      }, 2000);
     } else if (action === 'copyRequest') {
       copyToClipboard(formatRequestData(data));
     } else if (action === 'copyResponse') {
