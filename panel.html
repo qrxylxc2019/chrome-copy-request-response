@@ -147,6 +147,11 @@
       min-width: 200px;
       overflow-y: auto;
       background: linear-gradient(180deg, #fff 0%, #fafafa 100%);
+      flex-shrink: 0;
+    }
+    .request-list.expanded {
+      width: 100% !important;
+      flex: 1;
     }
     
     /* 可拖动分隔条 */
@@ -157,6 +162,9 @@
       flex-shrink: 0;
       transition: background 0.2s;
       position: relative;
+    }
+    .resizer.hidden {
+      display: none;
     }
     .resizer::before {
       content: '';
@@ -279,11 +287,41 @@
       flex-direction: column;
       overflow: hidden;
       background: linear-gradient(180deg, #fff 0%, #f8f8f8 100%);
+      transition: flex 0.3s ease;
+    }
+    .detail-panel.collapsed {
+      flex: 0 0 0;
+      min-width: 0;
+      overflow: hidden;
     }
     .detail-tabs {
       display: flex;
       background: linear-gradient(180deg, #fafafa 0%, #f0f0f0 100%);
       border-bottom: 1px solid #ddd;
+      position: relative;
+    }
+    .detail-close-btn {
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 16px;
+      color: #666;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+      transition: all 0.2s;
+    }
+    .detail-close-btn:hover {
+      background: rgba(0, 0, 0, 0.08);
+      color: #333;
     }
     .detail-tab {
       padding: 10px 18px;
@@ -291,6 +329,9 @@
       border-bottom: 2px solid transparent;
       color: #666;
       font-weight: 500;
+    }
+    .detail-tab:first-of-type {
+      margin-left: 40px;
     }
     .detail-tab:hover { color: #333; }
     .detail-tab.active {
@@ -428,6 +469,7 @@
         
         <div class="detail-panel" id="detailPanel">
           <div class="detail-tabs">
+            <button class="detail-close-btn" id="detailCloseBtn" title="关闭">✕</button>
             <div class="detail-tab active" data-tab="headers">Headers</div>
             <div class="detail-tab" data-tab="payload">Payload</div>
             <div class="detail-tab" data-tab="response">Response</div>

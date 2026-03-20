@@ -64,7 +64,30 @@ let currentTypeFilter = 'fetch';
 const requestList = document.getElementById('requestList');
 const filterInput = document.getElementById('filter');
 const detailContent = document.getElementById('detailContent');
+const detailPanel = document.getElementById('detailPanel');
+const detailCloseBtn = document.getElementById('detailCloseBtn');
+const resizerEl = document.getElementById('resizer');
 const toast = document.getElementById('toast');
+let detailPanelVisible = true;
+
+function showDetailPanel() {
+  detailPanelVisible = true;
+  detailPanel.classList.remove('collapsed');
+  resizerEl.classList.remove('hidden');
+  requestList.classList.remove('expanded');
+}
+
+function hideDetailPanel() {
+  detailPanelVisible = false;
+  detailPanel.classList.add('collapsed');
+  resizerEl.classList.add('hidden');
+  requestList.classList.add('expanded');
+}
+
+detailCloseBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  hideDetailPanel();
+});
 
 // 根据 MIME 类型和 URL 判断请求类型
 function getRequestType(data) {
@@ -566,6 +589,9 @@ requestList.addEventListener('click', (e) => {
     selectedRequestId = parseFloat(item.dataset.id);
     renderRequestList();
     renderDetail();
+    if (!detailPanelVisible) {
+      showDetailPanel();
+    }
   }
 });
 
